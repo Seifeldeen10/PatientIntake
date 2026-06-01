@@ -1,0 +1,17 @@
+APIkey
+uploads/
+
+.venv/
+venv/
+env/
+
+__pycache__/
+*.pyc
+*.pyo
+
+*.db
+
+latest_submission*.json
+
+ngrok*.log
+server*.log
