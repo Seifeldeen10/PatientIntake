@@ -27,8 +27,13 @@ CORS(app)
 app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "intake.db")
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+DB_PATH = os.environ.get("DB_PATH") or (
+    os.path.join("/tmp", "intake.db") if IS_VERCEL else os.path.join(BASE_DIR, "intake.db")
+)
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR") or (
+    os.path.join("/tmp", "uploads") if IS_VERCEL else os.path.join(BASE_DIR, "uploads")
+)
 
 def load_clinical_agent_module():
     """Load the separate clinical agent module from the local file with a space in its name."""
@@ -100,8 +105,20 @@ DOSE_PATTERN = re.compile(
 
 def get_db_connection():
     """Open the SQLite intake database and return rows that can be accessed by column name."""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS intake_forms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT,
+            age INTEGER,
+            mobile TEXT,
+            email TEXT,
+            form_data TEXT
+        )
+    """)
+    conn.commit()
     return conn
 
 def safe_json_loads(value, fallback=None):
@@ -481,7 +498,7 @@ def build_label_flags(openfda_results, current_medications, medical_history):
 def clinical_agent_dependencies():
     """Package local helper functions so the external clinical agent module can call them."""
     return {
-        "build_clinical_context": build_clinical_context,
+        "build_clinical_context": safe_build_clinical_context,
         "build_label_flags": build_label_flags,
         "clamp_int": clamp_int,
         "get_db_connection": get_db_connection,
@@ -493,6 +510,18 @@ def clinical_agent_dependencies():
         "parse_possible_drug_names": parse_possible_drug_names,
         "safe_json_loads": safe_json_loads,
     }
+
+def safe_build_clinical_context(query, top_k=6):
+    """Return RAG context when available, or an empty context when deployment lacks a local index."""
+    try:
+        return build_clinical_context(query, top_k=top_k)
+    except RuntimeError as exc:
+        return {
+            "query": query,
+            "context": "",
+            "sources": [],
+            "error": str(exc),
+        }
 
 def default_clinical_query(data):
     parts = [
