@@ -14,6 +14,14 @@ from core.agent_utils import load_secret as read_secret, request_json
 
 # Purpose: configure local PDF sources, Chroma vector storage, and Gemini embeddings.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
+
 RAG_SOURCE_DIR = os.environ.get("RAG_SOURCE_DIR", os.path.join(BASE_DIR, "data", "rag_files"))
 RAG_CHROMA_DIR = os.environ.get("RAG_CHROMA_DIR", os.path.join(BASE_DIR, "chroma_db"))
 RAG_COLLECTION_NAME = os.environ.get("RAG_COLLECTION_NAME", "clinical_guidelines")

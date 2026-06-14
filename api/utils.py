@@ -35,6 +35,14 @@ UPLOAD_DIR = os.environ.get("UPLOAD_DIR") or os.path.join(BASE_DIR, "uploads")
 STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND") or "local_filesystem"
 STORAGE_IS_EPHEMERAL = False
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv(os.path.join(BASE_DIR, ".env"), override=False)
+
 
 def deployment_info():
     """Return storage/runtime metadata useful for deployed clients and admin routes."""
