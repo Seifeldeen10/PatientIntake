@@ -21,7 +21,6 @@ from api.utils import (
     clinical_agent_dependencies,
     clinical_agent_module,
     deployment_info,
-    extract_text_with_openai,
     extract_text_with_tesseract,
     format_answer,
     generate_next_patient_code,
@@ -421,7 +420,7 @@ def lookup_patient_code_with_password():
 
 @app.route("/scan-drugs", methods=["POST"])
 def scan_drugs():
-    """Handle medication image uploads, OCR them, and run openFDA/DrugBank checks."""
+    """Handle medication image uploads, OCR them locally, and run openFDA/DrugBank checks."""
     saved_files = []
     errors = []
 
@@ -443,25 +442,22 @@ def scan_drugs():
     medical_history = request.form.get("medicalHistory", "")
 
     has_drug_images = any(file_info.get("category") == "drug-images" for file_info in saved_files)
-    ai_note = None
     ocr_note = None
-    ai_scan = None
+    ocr_scan = None
 
     if has_drug_images:
-        ai_scan, ai_note = extract_text_with_openai(saved_files)
-        if ai_scan is None:
-            ai_scan, ocr_note = extract_text_with_tesseract(saved_files)
+        ocr_scan, ocr_note = extract_text_with_tesseract(saved_files)
 
     extracted_text = ""
     extracted_names = []
     scan_source = "manual_text"
 
-    if ai_scan:
-        scan_source = "openai_vision" if not ai_note else "local_ocr"
-        extracted_text = first_text(ai_scan.get("observed_text"), 2000)
+    if ocr_scan:
+        scan_source = "local_ocr"
+        extracted_text = first_text(ocr_scan.get("observed_text"), 2000)
         extracted_names = [
             str(name).strip()
-            for name in ai_scan.get("drug_names", [])
+            for name in ocr_scan.get("drug_names", [])
             if str(name).strip()
         ]
 
@@ -481,7 +477,7 @@ def scan_drugs():
         "This scan supports intake review only and is not a diagnosis, prescription, or medication-safety decision. / هذا الفحص لمراجعة بيانات الاستبيان فقط وليس تشخيصًا أو وصفة أو قرارًا علاجيًا.",
         "Confirm all detected medication names, strengths, and warnings with a licensed clinician. / يجب تأكيد أسماء الأدوية والجرعات والتحذيرات مع طبيب مختص.",
     ]
-    for note in (ai_note, ocr_note):
+    for note in (ocr_note,):
         if note:
             notes.append(note)
     notes.extend(errors)

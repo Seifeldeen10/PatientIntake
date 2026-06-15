@@ -1,4 +1,3 @@
-import base64
 import hmac
 import json
 import os
@@ -15,7 +14,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from core.agent_utils import compact_text as first_text
 from core.agent_utils import load_secret as read_secret
-from core.agent_utils import parse_json_object, request_json
+from core.agent_utils import request_json
 from core.crew_orchestrator import run_full_clinical_pipeline as orchestrate_full_clinical_pipeline
 from core.rag_store import build_clinical_context
 import nodes.agents as clinical_agent_module
@@ -63,7 +62,6 @@ def deployment_info():
 SECRET_ALIASES = {
     "DRUGBANK_API_KEY": {"DRUGBANK_API_KEY", "DRUGBANK"},
     "GEMINI_API_KEY": {"GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI", "GOOGLE"},
-    "OPENAI_API_KEY": {"OPENAI_API_KEY", "OPENAI"},
     "OPENFDA_API_KEY": {"OPENFDA_API_KEY", "OPEN_FDA_API_KEY", "OPENFDA", "FDA_API_KEY"},
 }
 
@@ -90,8 +88,6 @@ def public_upload_url(relative_path):
 
 SUBMISSIONS_PASSWORD = os.environ.get("SUBMISSIONS_PASSWORD", "Doctor")
 OPENFDA_API_KEY = load_secret("OPENFDA_API_KEY")
-OPENAI_API_KEY = load_secret("OPENAI_API_KEY")
-OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4.1-mini")
 DRUGBANK_API_KEY = load_secret("DRUGBANK_API_KEY")
 DRUGBANK_REGION = os.environ.get("DRUGBANK_REGION", "us")
 GEMINI_API_KEY = load_secret("GEMINI_API_KEY")
@@ -99,10 +95,12 @@ GEMINI_CLINICAL_MODEL = os.environ.get("GEMINI_CLINICAL_MODEL", "gemini-2.5-flas
 GEMINI_RESEARCH_MODEL = os.environ.get("GEMINI_RESEARCH_MODEL", "gemini-2.5-flash")
 GEMINI_EVIDENCE_REVIEWER_MODEL = os.environ.get("GEMINI_EVIDENCE_REVIEWER_MODEL", "gemini-2.5-flash")
 GEMINI_REPORT_MODEL = os.environ.get("GEMINI_REPORT_MODEL", "gemini-2.5-flash")
+TESSERACT_CMD = os.environ.get("TESSERACT_CMD", "").strip()
+TESSERACT_LANG = os.environ.get("TESSERACT_LANG", "eng").strip() or "eng"
+TESSERACT_CONFIG = os.environ.get("TESSERACT_CONFIG", "").strip()
 
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"}
 ALLOWED_INVESTIGATION_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS | {"pdf"}
-OPENAI_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
 MAX_UPLOAD_FILES = 12
 MAX_LOOKUP_NAMES = 8
 
@@ -415,80 +413,28 @@ def parse_possible_drug_names(*texts):
 
     return candidates
 
-def output_text_from_openai_response(payload):
-    """Collect text output from the OpenAI Responses API payload shape."""
-    if isinstance(payload.get("output_text"), str):
-        return payload["output_text"]
-
-    chunks = []
-    for output_item in payload.get("output", []):
-        for content in output_item.get("content", []):
-            if isinstance(content.get("text"), str):
-                chunks.append(content["text"])
-    return "\n".join(chunks).strip()
-
-def extract_text_with_openai(saved_files):
-    """Use OpenAI vision to read uploaded drug images and return medication text as JSON."""
-    if not OPENAI_API_KEY:
-        return None, "OpenAI vision is not configured. Set OPENAI_API_KEY to enable image scanning. / لم يتم إعداد OpenAI Vision. أضف OPENAI_API_KEY لتفعيل فحص الصور."
-
-    image_contents = []
-    for file_info in saved_files:
-        if file_info.get("category") != "drug-images":
-            continue
-        ext = file_info.get("extension", "").lower()
-        if ext not in OPENAI_IMAGE_EXTENSIONS:
-            continue
-        file_path = os.path.join(UPLOAD_DIR, file_info["relative_path"])
-        with open(file_path, "rb") as image_file:
-            encoded = base64.b64encode(image_file.read()).decode("ascii")
-        mime_ext = "jpeg" if ext == "jpg" else ext
-        image_contents.append({
-            "type": "input_image",
-            "image_url": f"data:image/{mime_ext};base64,{encoded}",
-            "detail": "high",
-        })
-
-    if not image_contents:
-        return None, "No OpenAI-compatible drug image was uploaded. / لم يتم رفع صورة دواء متوافقة مع OpenAI."
-
-    prompt = (
-        "Extract visible medication information from these drug package or pill images. "
-        "Return JSON only with keys: drug_names (array), observed_text (string), "
-        "strengths (array), dosage_forms (array), manufacturer_or_ndc (array), confidence_notes (string). "
-        "Do not diagnose, prescribe, or infer beyond visible label text."
-    )
-    body = {
-        "model": OPENAI_VISION_MODEL,
-        "input": [{
-            "role": "user",
-            "content": [{"type": "input_text", "text": prompt}] + image_contents,
-        }],
-    }
-
-    try:
-        payload = request_json(
-            "https://api.openai.com/v1/responses",
-            method="POST",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            body=body,
-            timeout=45,
-        )
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        return None, f"OpenAI vision scan failed / فشل فحص الصور باستخدام OpenAI: {exc}"
-
-    text = output_text_from_openai_response(payload)
-    return parse_json_object(text, fallback={}) or {"observed_text": text}, None
-
 def extract_text_with_tesseract(saved_files):
-    """Use local Tesseract OCR as a fallback to read text from uploaded drug images."""
+    """Use local Tesseract OCR to read text from uploaded drug images."""
     try:
         from PIL import Image
         import pytesseract
     except ImportError:
-        return None, "Local OCR is not installed. Install Pillow and pytesseract to enable fallback OCR. / لم يتم تثبيت OCR المحلي. ثبّت Pillow و pytesseract لتفعيل القراءة الاحتياطية."
+        return None, "Local OCR is not installed. Install Pillow and pytesseract to enable OCR."
+
+    if TESSERACT_CMD:
+        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
+    try:
+        pytesseract.get_tesseract_version()
+    except Exception as exc:
+        return None, (
+            "Tesseract OCR executable was not found or could not run. Install tesseract-ocr "
+            "on the server, keep it on PATH, or set TESSERACT_CMD to the executable path. "
+            f"Error: {exc}"
+        )
 
     text_parts = []
+    failures = []
     for file_info in saved_files:
         if file_info.get("category") != "drug-images":
             continue
@@ -497,14 +443,27 @@ def extract_text_with_tesseract(saved_files):
         try:
             file_path = os.path.join(UPLOAD_DIR, file_info["relative_path"])
             with Image.open(file_path) as image:
-                text_parts.append(pytesseract.image_to_string(image))
+                text_parts.append(
+                    pytesseract.image_to_string(
+                        image.convert("RGB"),
+                        lang=TESSERACT_LANG,
+                        config=TESSERACT_CONFIG,
+                    )
+                )
         except Exception as exc:
-            text_parts.append(f"[OCR failed for {file_info.get('original_name')}: {exc}]")
+            failures.append(f"{file_info.get('original_name')}: {exc}")
 
     text = "\n".join(part for part in text_parts if part.strip()).strip()
     if not text:
-        return None, "Local OCR did not extract text from the uploaded drug images. / لم يستخرج OCR المحلي نصًا من صور الأدوية المرفوعة."
-    return {"observed_text": text, "drug_names": parse_possible_drug_names(text)}, None
+        note = "Local OCR did not extract text from the uploaded drug images."
+        if failures:
+            note = f"{note} OCR errors: {'; '.join(failures[:3])}"
+        return None, note
+
+    note = None
+    if failures:
+        note = f"Some uploaded drug images could not be read by local OCR: {'; '.join(failures[:3])}"
+    return {"observed_text": text, "drug_names": parse_possible_drug_names(text)}, note
 
 def lookup_drugbank(drug_names):
     """Query DrugBank for product matches and possible interactions between parsed drugs."""

@@ -10,9 +10,9 @@ reportlab>=4.2.0
 arabic-reshaper>=3.0.0
 python-bidi>=0.6.0
 
-# Image Processing (for later use)
+# Image processing for local OCR
 Pillow==11.3.0
 
-# OCR (optional local fallback)
+# OCR Python wrapper. The tesseract executable must be installed separately.
 pytesseract==0.3.13
 crewai-tools>=0.132.0

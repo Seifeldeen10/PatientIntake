@@ -2,7 +2,7 @@
 
 A bilingual medical intake web app for collecting patient questionnaire data, medication details, medical history, investigation results, and uploaded medical files.
 
-The app is built with Flask, SQLite, HTML, CSS, and JavaScript. It includes optional medication lookup through openFDA, optional AI image scanning through OpenAI Vision, and optional DrugBank support when a DrugBank API key is available.
+The app is built with Flask, SQLite, HTML, CSS, and JavaScript. It includes optional medication lookup through openFDA, local medication image OCR through Tesseract, and optional DrugBank support when a DrugBank API key is available.
 It also includes a local RAG index for clinical books and guidelines using Gemini embeddings.
 
 ## Features
@@ -16,8 +16,7 @@ It also includes a local RAG index for clinical books and guidelines using Gemin
 - Medication text entry for current medications
 - Medical history and investigation result summaries
 - openFDA drug label lookup
-- Optional OpenAI Vision extraction from medication images
-- Optional local OCR fallback with Pillow and pytesseract
+- Local OCR extraction from medication images with Tesseract, Pillow, and pytesseract
 - Optional DrugBank lookup when configured
 - Local PDF RAG index for clinical guideline retrieval and citations
 
@@ -45,7 +44,7 @@ It also includes a local RAG index for clinical books and guidelines using Gemin
 
 - Python 3.10 or newer
 - pip
-- Optional: Tesseract OCR installed on the operating system for local OCR fallback
+- Tesseract OCR installed on the operating system for medication image OCR
 
 Python packages are listed in `requirements.txt`.
 
@@ -84,7 +83,6 @@ Supported keys:
 
 ```text
 OPENFDA_API_KEY=your_openfda_key
-OPENAI_API_KEY=your_openai_key
 DRUGBANK_API_KEY=your_drugbank_key
 GEMINI_API_KEY=your_gemini_key
 ```
@@ -210,7 +208,7 @@ The medication upload section supports:
 When the user clicks `Scan Uploads`, the server:
 
 1. Saves uploaded files under `uploads/`.
-2. Extracts medication text from images if OpenAI Vision or local OCR is configured.
+2. Extracts medication text from drug/package images with local Tesseract OCR.
 3. Parses possible medication names from image text and manual medication text.
 4. Looks up drug label data through openFDA.
 5. Checks optional DrugBank data when `DRUGBANK_API_KEY` is set.
@@ -241,9 +239,10 @@ To deploy to AWS EC2 or another persistent server:
 
 1. Clone this repository on your instance.
 2. Set up a systemd service (or run with gunicorn/uwsgi) to keep the Flask app running persistently.
-3. Configure your environment variables or local `APIkey` file (including `GEMINI_API_KEY`).
-4. Ensure the database (`intake.db`), RAG vectors (`rag_vectors.db`), and `uploads/` directory have write permissions.
-5. In a persistent VM environment, background threads spawned by Flask (such as the clinical pipeline running CrewAI and Gemini agents) will run continuously until completion.
+3. Install Tesseract OCR on the instance and make sure the `tesseract` command is on PATH, or set `TESSERACT_CMD=/usr/bin/tesseract`.
+4. Configure your environment variables or local `APIkey` file (including `GEMINI_API_KEY`).
+5. Ensure the database (`intake.db`), RAG vectors (`rag_vectors.db`), and `uploads/` directory have write permissions.
+6. In a persistent VM environment, background threads spawned by Flask (such as the clinical pipeline running CrewAI and Gemini agents) will run continuously until completion.
 
 ## Submitted Forms
 
@@ -280,9 +279,40 @@ This app stores sensitive medical information locally:
 
 These files are ignored by git. Do not deploy this app publicly without adding proper production security, HTTPS, authentication, authorization, access logging, backups, and clinical data privacy controls.
 
-## Optional OCR Notes
+## OCR Notes
 
 `pytesseract` is a Python wrapper. For OCR to work, the Tesseract executable must also be installed on the machine and available on the system path.
+
+On Amazon Linux / EC2, install the operating-system package first, for example:
+
+```bash
+sudo dnf install -y tesseract
+```
+
+On Ubuntu/Debian EC2 images:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr
+```
+
+If Tesseract is not on PATH, set:
+
+```text
+TESSERACT_CMD=/usr/bin/tesseract
+```
+
+The default OCR language is English:
+
+```text
+TESSERACT_LANG=eng
+```
+
+For Arabic OCR, install the Arabic language data on the server and set:
+
+```text
+TESSERACT_LANG=eng+ara
+```
 
 If OCR is not installed, the app still supports manual medication text and openFDA lookup.
 
