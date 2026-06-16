@@ -631,7 +631,7 @@ function renderScanResults(result) {
 
   const notes = result.notes?.length
     ? `<ul class="scan-notes">${result.notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>`
-    : "";
+    : "<p class=\"scan-no-notes\">No scan notes available</p>";
 
   scanResults.innerHTML = `
     <div class="scan-summary">
@@ -710,8 +710,7 @@ async function scanDrugUploads() {
     scanStatus.textContent = "Scan failed.";
     showMessage(
       "Upload Scan Error / خطأ في فحص الملفات",
-      `${error.message || "Could not scan the uploaded files."}\nPlease make sure the server is running and try again.\nتعذر فحص الملفات. تأكد أن الخادم يعمل ثم حاول مرة أخرى.`,
-      scanDrugsButton
+      `${error.message || "Could not scan the uploaded files."}`
     );
     return false;
   } finally {
@@ -818,7 +817,7 @@ formElement.addEventListener("submit", async function (e) {
   } catch (error) {
     showMessage(
       "Submission Error / خطأ في الإرسال",
-      `${error.message || "Could not submit the form."}\nPlease make sure the server is running.`
+      `${error.message || "Could not submit the form."}`
     );
   } finally {
     setSubmitState(false);

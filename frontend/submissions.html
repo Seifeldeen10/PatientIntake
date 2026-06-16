@@ -118,10 +118,11 @@
                     {% if uploaded_files_answer.links %}
                       <ul>
                         {% for link in uploaded_files_answer.links %}
+                          {% set file_label = link.original_name or link.name or link.stored_name or "Uploaded file" %}
                           {% if link.url %}
-                            <li><a href="{{ link.url }}" target="_blank" rel="noopener">{{ link.name }}</a></li>
+                            <li><a href="{{ link.url }}" target="_blank" rel="noopener">{{ file_label }}</a></li>
                           {% else %}
-                            <li>{{ link.name }}</li>
+                            <li>{{ file_label }}</li>
                           {% endif %}
                         {% endfor %}
                       </ul>
@@ -140,7 +141,11 @@
                       <td>{{ submission.uploaded_drug_analysis.scan_source or "manual_text" }}</td>
                     </tr>
                     <tr>
-                      <th data-i18n-en="Detected Medication Names" data-i18n-ar="أسماء الأدوية المكتشفة">Detected Medication Names</th>
+                      <th data-i18n-en="Extracted Text" data-i18n-ar="النص المستخرج">Extracted Text</th>
+                      <td>{{ submission.uploaded_drug_analysis.extracted_text or "-" }}</td>
+                    </tr>
+                    <tr>
+                      <th data-i18n-en="Medication Candidates" data-i18n-ar="مرشحات الأدوية">Medication Candidates</th>
                       <td>
                         {% if submission.uploaded_drug_analysis.drug_candidates %}
                           {{ submission.uploaded_drug_analysis.drug_candidates | join(", ") }}
@@ -163,7 +168,7 @@
                             {% endfor %}
                           </ul>
                         {% else %}
-                          -
+                          No scan notes available
                         {% endif %}
                       </td>
                     </tr>
@@ -177,7 +182,7 @@
                             {% endfor %}
                           </ul>
                         {% else %}
-                          -
+                          No label flags found
                         {% endif %}
                       </td>
                     </tr>

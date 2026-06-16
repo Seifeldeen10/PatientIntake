@@ -443,6 +443,7 @@ def scan_drugs():
     medical_history = request.form.get("medicalHistory", "")
 
     has_drug_images = any(file_info.get("category") == "drug-images" for file_info in saved_files)
+    drug_image_count = sum(1 for file_info in saved_files if file_info.get("category") == "drug-images")
     gemini_note = None
     ocr_note = None
     ocr_scan = None
@@ -477,15 +478,39 @@ def scan_drugs():
 
     openfda_results = [lookup_openfda_label(name) for name in drug_candidates]
     label_flags = build_label_flags(openfda_results, current_medications, medical_history)
+    if not label_flags:
+        matched_labels = [result for result in openfda_results if result.get("found")]
+        if matched_labels:
+            label_flags = [{
+                "type": "label_summary",
+                "message": (
+                    f"Reviewed {len(matched_labels)} medication label(s) for the submitted image "
+                    f"and found no direct warning or interaction text matches."
+                ),
+            }]
+        elif drug_candidates:
+            label_flags = [{
+                "type": "label_summary",
+                "message": (
+                    f"Looked up {len(drug_candidates)} medication candidate(s) from the submitted image "
+                    f"and found no openFDA label matches."
+                ),
+            }]
 
-    notes = [
-        "This scan supports intake review only and is not a diagnosis, prescription, or medication-safety decision. / هذا الفحص لمراجعة بيانات الاستبيان فقط وليس تشخيصًا أو وصفة أو قرارًا علاجيًا.",
-        "Confirm all detected medication names, strengths, and warnings with a licensed clinician. / يجب تأكيد أسماء الأدوية والجرعات والتحذيرات مع طبيب مختص.",
-    ]
-    for note in (ocr_note, gemini_note):
-        if note:
-            notes.append(note)
-    notes.extend(errors)
+    notes = []
+    if drug_image_count:
+        notes.append(
+            f"Scanned {drug_image_count} uploaded drug image(s) from the submitted form."
+        )
+    if ocr_scan:
+        notes.append(f"Scan source: {'Gemini vision' if gemini_note else 'Local OCR'}.")
+    elif current_medications.strip():
+        notes.append("Medication text was scanned from the form instead of an uploaded image.")
+
+    if extracted_text.strip():
+        notes.append("Readable text was extracted from the submitted image.")
+    if extracted_description.strip():
+        notes.append(f"Image description: {extracted_description}")
 
     return jsonify({
         "message": "Upload received and medication lookup completed. / تم استلام الملفات وإكمال البحث عن الأدوية.",
@@ -528,6 +553,21 @@ def submissions():
         uploaded_files = form_data.pop("uploadedFiles", None)
         uploaded_drug_analysis = form_data.pop("uploadedDrugAnalysis", None)
         uploaded_file_summary = form_data.pop("uploadedFileSummary", None)
+        if isinstance(uploaded_files, str):
+            try:
+                uploaded_files = json.loads(uploaded_files)
+            except json.JSONDecodeError:
+                pass
+        if isinstance(uploaded_drug_analysis, str):
+            try:
+                uploaded_drug_analysis = json.loads(uploaded_drug_analysis)
+            except json.JSONDecodeError:
+                pass
+        if isinstance(uploaded_file_summary, str):
+            try:
+                uploaded_file_summary = json.loads(uploaded_file_summary)
+            except json.JSONDecodeError:
+                pass
         submission_id = row["id"]
         code_no = f"INT-{submission_id}"
         report_pdf_url = _resolve_report_pdf_url(report_pdf, code_no)
@@ -574,16 +614,8 @@ def submit_form():
     patient_password = str(data.get("patientPassword") or "").strip()
 
     uploaded_file_summary = data.get("uploadedFileSummary")
-    has_uploaded_files = False
-    if isinstance(uploaded_file_summary, dict):
-        has_uploaded_files = bool(uploaded_file_summary.get("drugImages") or uploaded_file_summary.get("investigationFiles"))
-    elif isinstance(uploaded_file_summary, list):
-        has_uploaded_files = bool(uploaded_file_summary)
-    elif isinstance(uploaded_file_summary, str):
-        has_uploaded_files = uploaded_file_summary.strip() not in ("", "{}", "[]")
-
-    if has_uploaded_files and not data.get("uploadedDrugAnalysis"):
-        return jsonify({"error": "Please scan uploaded files before submitting."}), 400
+    # Upload scanning is enforced on the client when files are selected.
+    # Text-only submissions should not be blocked by this endpoint.
 
     if data.get("patientStatus") == "first_time" and not patient_password:
         return jsonify({"error": "Patient password is required for first-time access."}), 400
