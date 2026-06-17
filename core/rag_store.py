@@ -99,7 +99,7 @@ def extract_pdf_pages(path):
     try:
         from pypdf import PdfReader
     except ImportError as exc:
-        raise RuntimeError("Install pypdf first: pip install -r requirements.txt") from exc
+        raise RuntimeError("Install pypdf first: python -m pip install -e .") from exc
 
     reader = PdfReader(path)
     if reader.is_encrypted:

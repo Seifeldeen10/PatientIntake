@@ -25,12 +25,9 @@ from nodes.RAG_agent import retrieve_clinical_context
 import nodes.agents as clinical_agent_module
 from nodes.agents import (
     build_arabic_pdf_report,
-    run_evidence_reviewer_agent,
-    run_lifestyle_agent,
-    run_report_agent,
-    run_research_agent,
     save_report_pdf as save_report_pdf_to_disk,
 )
+from tools.report_normalization import normalize_final_report, text_key
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -159,7 +156,7 @@ def _azure_service_client():
     try:
         from azure.storage.blob import BlobServiceClient
     except ImportError as exc:
-        raise RuntimeError("azure-storage-blob is not installed. Run pip install -r requirements.txt.") from exc
+        raise RuntimeError("azure-storage-blob is not installed. Run python -m pip install -e .") from exc
 
     connection_string = _clean_azure_connection_string(AZURE_STORAGE_CONNECTION_STRING)
     if connection_string:
@@ -203,7 +200,7 @@ def upload_storage_bytes(relative_path, contents, *, content_type="application/o
         try:
             from azure.storage.blob import ContentSettings
         except ImportError as exc:
-            raise RuntimeError("azure-storage-blob is not installed. Run pip install -r requirements.txt.") from exc
+            raise RuntimeError("azure-storage-blob is not installed. Run python -m pip install -e .") from exc
 
         blob_client = _azure_container_client().get_blob_client(blob_name)
         blob_client.upload_blob(
@@ -847,10 +844,10 @@ def run_full_clinical_pipeline(data, submission_id=None):
         gemini_report_model=GEMINI_REPORT_MODEL,
         clinical_agent_module=clinical_agent_module,
         clinical_agent_dependencies=clinical_agent_dependencies,
-        run_lifestyle_agent=run_lifestyle_agent,
-        run_research_agent=run_research_agent,
-        run_evidence_reviewer_agent=run_evidence_reviewer_agent,
-        run_report_agent=run_report_agent,
+        run_lifestyle_agent=clinical_agent_module.run_lifestyle_agent,
+        run_research_agent=clinical_agent_module.run_research_agent,
+        run_evidence_reviewer_agent=clinical_agent_module.run_evidence_reviewer_agent,
+        run_report_agent=clinical_agent_module.run_report_agent,
         build_arabic_pdf_report=build_arabic_pdf_report,
         save_report_pdf=save_report_pdf,
         upload_dir=UPLOAD_DIR,
@@ -880,10 +877,15 @@ def render_ai_report(pipeline):
     final_report = {}
     report_pdf = {}
     if pipeline:
+        status = str(pipeline.get("status") or "").strip().lower()
         report_agent = pipeline.get("report_agent", {})
         final_report = report_agent.get("report") or pipeline.get("final_report") or {}
-        if final_report and not any(key in final_report for key in ("executive_summary", "patient_snapshot", "report_type")):
+        if status in {"running", "started", "processing"}:
             final_report = {}
+        elif final_report and not any(key in final_report for key in ("executive_summary", "patient_snapshot", "report_type")):
+            final_report = {}
+        else:
+            final_report = normalize_final_report(final_report)
         report_pdf = pipeline.get("report_pdf") or {}
 
     return render_template(
@@ -906,7 +908,7 @@ def build_ai_summary_points(pipeline, limit=12):
         text = str(text or "").strip()
         if not text:
             return
-        key = text.lower()
+        key = text_key(text)
         if key in seen:
             return
         seen.add(key)
@@ -923,9 +925,11 @@ def build_ai_summary_points(pipeline, limit=12):
             if count >= max_items or len(points) >= limit:
                 break
 
-    status = str(pipeline.get("status") or "").strip()
+    status = str(pipeline.get("status") or "").strip().lower()
     stopped_after = str(pipeline.get("stopped_after") or "").strip()
     if status:
+        if status in {"running", "started", "processing"}:
+            return ["Pipeline is running."]
         add_point(f"Pipeline status: {status}")
 
     if pipeline.get("error"):
@@ -993,6 +997,7 @@ def build_ai_summary_points(pipeline, limit=12):
     report_agent = pipeline.get("report_agent") or {}
     final_report = report_agent.get("report") or pipeline.get("final_report") or {}
     if final_report:
+        final_report = normalize_final_report(final_report)
         add_point(final_report.get("executive_summary"))
         report_type = str(final_report.get("report_type") or "").strip()
         confidence = str(final_report.get("confidence") or "").strip()

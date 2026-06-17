@@ -1,6 +1,7 @@
 import json
 
 from tools.crewai_agent_tools import run_crewai_json_agent
+from nodes.tasks import get_agent_definition, get_task_definition
 
 
 # Purpose: tell Gemini exactly what structured clinical memo to return.
@@ -78,17 +79,19 @@ def build_evidence_packet(inputs, rag_context, medication_checks):
 
 def call_gemini_clinical_agent(evidence_packet, *, api_key, model_name, timeout=45):
     """Run the CrewAI clinical review agent and parse the JSON memo."""
+    agent_def = get_agent_definition("clinical")
+    task_def = get_task_definition("clinical")
     return run_crewai_json_agent(
-        role="Clinical Evidence Review Agent",
-        goal="Produce a clinician-facing structured memo using the supplied evidence packet and retrieved guideline passages.",
-        backstory=CLINICAL_AGENT_SYSTEM_PROMPT,
+        role=agent_def["role"],
+        goal=agent_def["goal"],
+        backstory=agent_def["backstory"],
         task_prompt=(
             "Use the retrieved guideline passages and citations already included in the evidence packet. "
             "Do not perform a second retrieval step. "
             "Integrate the supplied RAG context, medication checks, and safety flags directly into the JSON clinical memo.\n\n"
             f"{json.dumps(evidence_packet, ensure_ascii=False, indent=2)}"
         ),
-        expected_output="A valid JSON object matching the requested clinical memo response format.",
+        expected_output=task_def["expected_output"],
         api_key=api_key,
         model_name=model_name,
         max_tokens=8192,
@@ -260,8 +263,8 @@ def build_agent_inputs(data, dependencies):
     }
 
 
-def build_clinical_agent_response(data, dependencies):
-    """Assemble the full clinical agent response from RAG context and medication checks."""
+def build_clinical_evidence_context(data, dependencies):
+    """Assemble deterministic RAG and medication evidence before the CrewAI run."""
     inputs = build_agent_inputs(data, dependencies)
     top_k = dependencies["clamp_int"](data.get("top_k"), 6, 1, 12)
 
@@ -296,6 +299,21 @@ def build_clinical_agent_response(data, dependencies):
         "label_flags": label_flags,
     }
     evidence_packet = build_evidence_packet(inputs, rag_context, medication_checks)
+    return {
+        "input": inputs,
+        "rag": rag_context,
+        "medication_checks": medication_checks,
+        "evidence_packet": evidence_packet,
+    }
+
+
+def build_clinical_agent_response(data, dependencies):
+    """Assemble the full clinical agent response from RAG context and medication checks."""
+    context = build_clinical_evidence_context(data, dependencies)
+    inputs = context["input"]
+    rag_context = context["rag"]
+    medication_checks = context["medication_checks"]
+    evidence_packet = context["evidence_packet"]
 
     try:
         llm_report = call_gemini_clinical_agent(

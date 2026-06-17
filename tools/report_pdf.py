@@ -6,7 +6,7 @@ import shutil
 import textwrap
 from datetime import datetime
 
-from tools.report_packet import _as_list
+from tools.report_normalization import canonical_report_sections, dedupe_list, normalize_final_report
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,6 +62,7 @@ def _add_wrapped_rows(rows, style, text, *, width=88, prefix=""):
 
 def _report_lines(report):
     """Flatten structured report JSON into styled rows for the PDF writer."""
+    report = normalize_final_report(report)
     rows = []
     title_parts = textwrap.wrap(
         _clean_pdf_text(report.get("report_title") or "AI Clinical Evidence Report"),
@@ -84,25 +85,22 @@ def _report_lines(report):
         _add_wrapped_rows(rows, "body", part, width=84)
     rows.append({"style": "spacer", "text": ""})
 
-    section_map = [
-        ("Clinical Summary", [report.get("clinical_summary", "")]),
-        ("Findings", report.get("findings", [])),
-        ("Urgent Safety Alerts", report.get("urgent_safety_alerts", [])),
-        ("Clinical Findings", report.get("clinical_findings", [])),
-        ("Medication Safety", report.get("medication_safety", [])),
-        ("Evidence Summary", report.get("evidence_summary", [])),
-        ("Clinician Actions", report.get("clinician_actions", [])),
-        ("Missing Information", report.get("missing_information", [])),
-        ("Citations", report.get("citations") or report.get("source_citations", [])),
-        ("Limitations", report.get("limitations", [])),
-    ]
+    summary = report.get("clinical_summary") or report.get("executive_summary") or ""
+    if summary:
+        rows.append({"style": "section", "text": "Clinical Summary"})
+        _add_wrapped_rows(rows, "body", summary, width=82)
+        rows.append({"style": "spacer", "text": ""})
 
-    for heading, items in section_map:
+    for heading, items in canonical_report_sections(report):
         rows.append({"style": "section", "text": heading})
-        normalized = _as_list(items)
-        if not normalized:
-            rows.append({"style": "muted", "text": "No items reported."})
-        for item in normalized:
+        for item in items:
+            _add_wrapped_rows(rows, "item", item, width=82, prefix="- ")
+        rows.append({"style": "spacer", "text": ""})
+
+    citations = dedupe_list(report.get("citations") or report.get("source_citations"))
+    if citations:
+        rows.append({"style": "section", "text": "Citations"})
+        for item in citations:
             _add_wrapped_rows(rows, "item", item, width=82, prefix="- ")
         rows.append({"style": "spacer", "text": ""})
     return rows
@@ -333,27 +331,46 @@ def _arabic_wrapped_lines(text, width=72, prefix=""):
 
 def _arabic_sections(report):
     """Return Arabic PDF sections from an Arabic structured report."""
+    report = normalize_final_report(report)
     snapshot = report.get("patient_snapshot") or {}
-    return [
+    arabic_titles = {
+        "Urgent Safety Alerts": "تنبيهات السلامة العاجلة",
+        "Medication Safety": "سلامة الأدوية",
+        "Findings": "النتائج",
+        "Clinical Findings": "النتائج السريرية",
+        "Evidence Summary": "ملخص الأدلة",
+        "Clinician Actions": "إجراءات مقترحة للطبيب",
+        "Missing Information": "المعلومات الناقصة",
+        "Limitations": "القيود",
+        "Citations": "المراجع والاستشهادات",
+        "Clinical Summary": "الملخص السريري",
+    }
+
+    sections = [
         ("بيانات المريض", [
             f"رقم الملف: {snapshot.get('submission_id', '')}",
             f"العمر: {snapshot.get('age', '')}",
             f"النوع: {snapshot.get('sex', '')}",
         ]),
-        ("الملخص السريري", [report.get("clinical_summary", "")]),
-        ("النتائج", report.get("findings", [])),
-        ("تنبيهات السلامة العاجلة", report.get("urgent_safety_alerts", [])),
-        ("سلامة الأدوية", report.get("medication_safety", [])),
-        ("ملخص الأدلة", report.get("evidence_summary", [])),
-        ("إجراءات مقترحة للطبيب", report.get("clinician_actions", [])),
-        ("المعلومات الناقصة", report.get("missing_information", [])),
-        ("المراجع والاستشهادات", report.get("citations") or report.get("source_citations", [])),
-        ("القيود", report.get("limitations", [])),
     ]
+
+    summary = report.get("clinical_summary") or report.get("executive_summary") or ""
+    if summary:
+        sections.append(("الملخص السريري", [summary]))
+
+    for heading, items in canonical_report_sections(report):
+        sections.append((arabic_titles.get(heading, heading), items))
+
+    citations = dedupe_list(report.get("citations") or report.get("source_citations"))
+    if citations:
+        sections.append(("المراجع والاستشهادات", citations))
+
+    return sections
 
 
 def write_arabic_pdf(report, output_path, *, font_paths=None):
     """Write an Arabic RTL PDF using ReportLab with embedded Arabic fonts."""
+    report = normalize_final_report(report)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     arabic_reshaper, get_display, colors, letter, pdfmetrics, TTFont, canvas = _load_arabic_pdf_libs()
     regular_font, bold_font = font_paths or _arabic_font_paths()
@@ -426,7 +443,7 @@ def write_arabic_pdf(report, output_path, *, font_paths=None):
 
     for heading, items in _arabic_sections(report):
         draw_section(heading)
-        normalized = _as_list(items)
+        normalized = dedupe_list(items)
         if not normalized:
             draw_wrapped("لا توجد عناصر مسجلة.", font="ArabicRegular", size=10, color="#6b7280")
         for item in normalized:

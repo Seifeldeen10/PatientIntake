@@ -2,12 +2,11 @@
 
 import json
 
+from nodes.tasks import get_agent_definition, get_task_definition
 from tools import report_packet as report_packet_tools
 from tools import report_pdf as report_pdf_tools
-from tools.report_packet import (
-    ARABIC_PDF_SYSTEM_PROMPT,
-    REPORT_SYSTEM_PROMPT,
-)
+from tools.report_normalization import normalize_final_report
+from tools.report_packet import ARABIC_PDF_SYSTEM_PROMPT, REPORT_SYSTEM_PROMPT
 from tools.crewai_agent_tools import run_crewai_json_agent
 
 
@@ -16,15 +15,17 @@ GEMINI_REPORT_MODEL = "gemini-2.5-flash"
 
 def call_report_agent(report_packet, *, api_key, model_name=GEMINI_REPORT_MODEL, timeout=60):
     """Run the CrewAI final report agent and parse the structured JSON report."""
+    agent_def = get_agent_definition("report")
+    task_def = get_task_definition("report")
     return run_crewai_json_agent(
-        role="Final Structured Report Agent",
-        goal="Create a structured final report from the completed pipeline output.",
-        backstory=REPORT_SYSTEM_PROMPT,
+        role=agent_def["role"],
+        goal=agent_def["goal"],
+        backstory=agent_def["backstory"],
         task_prompt=(
-            "Create the final structured JSON report from this pipeline output.\n\n"
+            f"{task_def['description']}\n\n"
             f"{json.dumps(report_packet, ensure_ascii=False, indent=2)}"
         ),
-        expected_output="A valid JSON object matching the requested final report response format.",
+        expected_output=task_def["expected_output"],
         api_key=api_key,
         model_name=model_name,
         max_tokens=8192,
@@ -88,11 +89,13 @@ def run_report_agent(pipeline_result, *, api_key, model_name=GEMINI_REPORT_MODEL
     except RuntimeError as exc:
         report = build_fallback_report(pipeline_result, error=str(exc))
         llm_error = str(exc)
+    else:
+        report = normalize_final_report(report)
 
     return {
         "engine": "crewai",
         "model": model_name,
         "report_packet": report_packet,
-        "report": report,
+        "report": normalize_final_report(report),
         "error": llm_error,
     }

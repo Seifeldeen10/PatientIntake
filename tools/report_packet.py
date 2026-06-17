@@ -3,6 +3,8 @@
 import json
 
 from tools.crewai_agent_tools import run_crewai_json_agent
+from tools.report_normalization import normalize_final_report
+from nodes.tasks import get_agent_definition, get_task_definition
 
 
 GEMINI_REPORT_MODEL = "gemini-2.5-flash"
@@ -52,6 +54,9 @@ Rules:
 - Do not invent facts, citations, PMIDs, medication facts, guideline statements, or lab values.
 - Base the report only on the supplied pipeline output.
 - Preserve urgent safety alerts prominently.
+- Keep each fact in only one section. Do not repeat the same statement across findings, clinical findings, evidence summary, clinician actions, and limitations.
+- Use findings for the main clinical facts, clinical findings only for distinct items not already captured in findings, and missing_information only for data still needed.
+- Keep executive_summary and clinical_summary distinct and concise.
 - Include citation quality concerns when the evidence reviewer flagged them.
 - Keep the output structured and concise enough for a PDF report.
 - Do not use Markdown, bold markers, bullets, headings, or asterisks inside string values. Use plain text only.
@@ -89,6 +94,7 @@ Rules:
 - Do not add new facts, citations, PMIDs, medication facts, guideline statements, diagnoses, or prescriptions.
 - Base the Arabic report only on the supplied structured report.
 - Use concise clinician-facing Arabic.
+- Keep repeated concepts in only one section.
 - Do not use Markdown, bullets, asterisks, or headings inside string values. Use plain text only.
 """.strip()
 
@@ -201,15 +207,17 @@ def build_report_packet(pipeline_result):
 
 def call_report_agent(report_packet, *, api_key, model_name=GEMINI_REPORT_MODEL, timeout=60):
     """Run the CrewAI final report agent and parse the structured JSON report."""
+    agent_def = get_agent_definition("report")
+    task_def = get_task_definition("report")
     return run_crewai_json_agent(
-        role="Final Structured Report Agent",
-        goal="Create a structured final report from the completed pipeline output.",
-        backstory=REPORT_SYSTEM_PROMPT,
+        role=agent_def["role"],
+        goal=agent_def["goal"],
+        backstory=agent_def["backstory"],
         task_prompt=(
-            "Create the final structured JSON report from this pipeline output.\n\n"
+            f"{task_def['description']}\n\n"
             f"{json.dumps(report_packet, ensure_ascii=False, indent=2)}"
         ),
-        expected_output="A valid JSON object matching the requested final report response format.",
+        expected_output=task_def["expected_output"],
         api_key=api_key,
         model_name=model_name,
         max_tokens=8192,
@@ -241,7 +249,7 @@ def build_fallback_report(pipeline_result, error=None):
     if error:
         limitations.append(f"Report agent unavailable: {error}")
 
-    return {
+    return normalize_final_report({
         "report_title": "AI Clinical Evidence Report",
         "report_type": report_type,
         "patient_snapshot": {
@@ -275,20 +283,22 @@ def build_fallback_report(pipeline_result, error=None):
             {"heading": "Clinician Actions", "items": _as_list(research_report.get("suggested_clinician_review"))},
             {"heading": "Missing Information", "items": _as_list(clinical_report.get("missing_information"))},
         ],
-    }
+    })
 
 
 def call_arabic_pdf_report(report, *, api_key, model_name=GEMINI_REPORT_MODEL, timeout=60):
     """Run the CrewAI Arabic PDF translator and parse the structured Arabic report."""
+    agent_def = get_agent_definition("arabic_pdf")
+    task_def = get_task_definition("arabic_pdf")
     return run_crewai_json_agent(
-        role="Arabic PDF Report Translator",
-        goal="Translate the final structured clinical report into Arabic for PDF generation only.",
-        backstory=ARABIC_PDF_SYSTEM_PROMPT,
+        role=agent_def["role"],
+        goal=agent_def["goal"],
+        backstory=agent_def["backstory"],
         task_prompt=(
-            "Translate this structured report into the requested Arabic JSON shape for the PDF only.\n\n"
+            f"{task_def['description']}\n\n"
             f"{json.dumps(report or {}, ensure_ascii=False, indent=2)}"
         ),
-        expected_output="A valid JSON object matching the requested Arabic PDF report response format.",
+        expected_output=task_def["expected_output"],
         api_key=api_key,
         model_name=model_name,
         max_tokens=8192,
@@ -334,6 +344,27 @@ def build_arabic_pdf_report(report, *, api_key, model_name=GEMINI_REPORT_MODEL):
         arabic_report = call_arabic_pdf_report(report, api_key=api_key, model_name=model_name)
         if not _contains_arabic(arabic_report):
             raise RuntimeError("Arabic translator did not return Arabic content.")
-        return arabic_report, None
+        return normalize_final_report(arabic_report), None
     except RuntimeError as exc:
         return build_fallback_arabic_pdf_report(report, error=str(exc)), str(exc)
+
+
+def build_fallback_arabic_pdf_report(report, error=None):
+    """Build an Arabic-labeled PDF report if translation is unavailable."""
+    report = report or {}
+    limitations = []
+    if error:
+        limitations.append(f"تعذر إنشاء النسخة العربية تلقائيًا: {error}")
+    return normalize_final_report({
+        "report_title": "تقرير المراجعة السريرية",
+        "patient_snapshot": report.get("patient_snapshot") or {},
+        "clinical_summary": "تعذر إنشاء النسخة العربية تلقائيًا. يرجى مراجعة التقرير الأصلي باللغة الإنجليزية.",
+        "findings": [],
+        "urgent_safety_alerts": [],
+        "medication_safety": [],
+        "evidence_summary": [],
+        "clinician_actions": [],
+        "missing_information": [],
+        "citations": _as_list(report.get("citations") or report.get("source_citations")),
+        "limitations": limitations,
+    })
