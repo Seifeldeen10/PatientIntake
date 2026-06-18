@@ -65,6 +65,23 @@ def _call_gemini(raw_data: dict, api_key: str) -> dict:
     )
 
 
+def _first_present(data, *keys):
+    """Return the first non-empty value found for the given keys."""
+    for key in keys:
+        value = (data or {}).get(key)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _summarize_values(value):
+    """Convert scalar or list values into readable plain text."""
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item or "").strip()]
+        return ", ".join(items)
+    return str(value or "").strip()
+
+
 def _has_meaningful_patient_data(value):
     """Return True when the submission contains at least some usable patient context."""
     if isinstance(value, dict):
@@ -88,7 +105,71 @@ def _claims_no_patient_data(reasoning):
             "no patient information was provided",
             "no patient data provided",
             "insufficient patient data was provided",
+            "no lifestyle or psychological data was provided",
+            "no lifestyle data was provided",
+            "no psychological data was provided",
+            "without any information, it is impossible to assess lifestyle contributions",
+            "without any information, it is impossible to assess",
         )
+    )
+
+
+def _build_patient_issue_reasoning(raw_data):
+    """Build a patient-specific lifestyle-triage summary from the submitted data."""
+    raw_data = raw_data or {}
+    complaints = _summarize_values(
+        _first_present(raw_data, "complaints", "complaint", "chiefComplaint", "chief_complaint")
+    )
+    medical_history = _summarize_values(
+        _first_present(
+            raw_data,
+            "medicalHistory",
+            "medical_history",
+            "history",
+            "pastMedicalHistory",
+            "medicalConditions",
+            "medical_conditions",
+        )
+    )
+    current_medications = _summarize_values(
+        _first_present(raw_data, "currentMedications", "current_medications", "medications")
+    )
+    lifestyle_details = _summarize_values(
+        _first_present(
+            raw_data,
+            "lifestyleFactors",
+            "lifestyle_factors",
+            "sleep",
+            "stress",
+            "smoking",
+            "alcohol",
+            "exercise",
+            "diet",
+        )
+    )
+
+    issue_parts = [part for part in (complaints, medical_history, current_medications) if part]
+    if issue_parts:
+        lead = issue_parts[0]
+        if len(issue_parts) > 1:
+            lead = f"{lead} with {issue_parts[1]}"
+        if len(issue_parts) > 2:
+            lead = f"{lead} and current medications including {issue_parts[2]}"
+        if lifestyle_details:
+            return (
+                f"The submission describes {lead}. Lifestyle information was limited to {lifestyle_details}, "
+                f"but the reported sexual-health complaints and medical complexity support further clinical "
+                f"investigation for organic, vascular, hormonal, or medication-related contributors."
+            )
+        return (
+            f"The submission describes {lead}. Even without detailed lifestyle or psychological information, "
+            f"the reported sexual-health complaints and medical complexity support further clinical investigation "
+            f"for organic, vascular, hormonal, or medication-related contributors."
+        )
+
+    return (
+        "The submission contains patient-specific information, but the lifestyle triage response did not analyze "
+        "it reliably. Further clinical investigation is appropriate."
     )
 
 
@@ -116,10 +197,7 @@ def run_lifestyle_agent(raw_data: dict, api_key: str) -> dict:
         result["decision"] = "NO"
         result["confidence"] = "low"
         result["dominant_factors"] = []
-        result["reasoning"] = (
-            "Patient data was present in the submission, but the lifestyle triage response did not analyze it "
-            "reliably. Continuing to the full clinical pipeline for safety."
-        )
+        result["reasoning"] = _build_patient_issue_reasoning(raw_data)
         result["lifestyle_recommendations"] = []
 
     # Purpose: keep the routing flag consistent with the YES/NO decision.
