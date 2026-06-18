@@ -48,14 +48,23 @@ def _call_gemini(raw_data: dict, api_key: str) -> dict:
     """Run the CrewAI lifestyle triage agent on raw form data."""
     agent_def = get_agent_definition("lifestyle")
     task_def = get_task_definition("lifestyle")
+    patient_context = _build_lifestyle_patient_context(raw_data)
+    task_prompt = f"{task_def['description']}\n\n"
+    if patient_context:
+        task_prompt += (
+            "Use this normalized patient context first when making the triage decision. "
+            "Symptoms or complaints, age, sex, medical history, medications, questionnaire results, "
+            "and lifestyle details all count as patient data. "
+            "If some lifestyle or psychological fields are missing, state what is missing, but do not say "
+            "that no patient data was provided when patient context is present.\n\n"
+            f"Patient context:\n{patient_context}\n\n"
+        )
+    task_prompt += f"Raw submission JSON:\n{json.dumps(raw_data, ensure_ascii=False, indent=2)}"
     return run_crewai_json_agent(
         role=agent_def["role"],
         goal=agent_def["goal"],
         backstory=agent_def["backstory"],
-        task_prompt=(
-            f"{task_def['description']}\n\n"
-            f"{json.dumps(raw_data, ensure_ascii=False, indent=2)}"
-        ),
+        task_prompt=task_prompt,
         expected_output=task_def["expected_output"],
         api_key=api_key,
         model_name=GEMINI_MODEL,
@@ -80,6 +89,62 @@ def _summarize_values(value):
         items = [str(item).strip() for item in value if str(item or "").strip()]
         return ", ".join(items)
     return str(value or "").strip()
+
+
+def _build_lifestyle_patient_context(raw_data):
+    """Build a compact normalized patient summary for the lifestyle triage prompt."""
+    raw_data = raw_data or {}
+    complaints = _summarize_values(
+        _first_present(raw_data, "complaints", "complaint", "chiefComplaint", "chief_complaint")
+    )
+    medical_history = _summarize_values(
+        _first_present(
+            raw_data,
+            "medicalHistory",
+            "medical_history",
+            "history",
+            "pastMedicalHistory",
+            "medicalConditions",
+            "medical_conditions",
+        )
+    )
+    current_medications = _summarize_values(
+        _first_present(raw_data, "currentMedications", "current_medications", "medications")
+    )
+    lifestyle_details = _summarize_values(
+        _first_present(
+            raw_data,
+            "lifestyleFactors",
+            "lifestyle_factors",
+            "sleep",
+            "stress",
+            "smoking",
+            "alcohol",
+            "exercise",
+            "diet",
+        )
+    )
+    questionnaire_details = _summarize_values(
+        _first_present(
+            raw_data,
+            "iief_data",
+            "pedt_data",
+            "ehs_data",
+            "low_libido_data",
+        )
+    )
+    parts = [
+        f"Age: {_summarize_values(_first_present(raw_data, 'age'))}",
+        f"Sex: {_summarize_values(_first_present(raw_data, 'sex', 'gender'))}",
+        f"Complaints: {complaints}",
+        f"Medical history: {medical_history}",
+        f"Current medications: {current_medications}",
+        f"Lifestyle details: {lifestyle_details}",
+        f"Questionnaire data: {questionnaire_details}",
+    ]
+    return "\n".join(
+        part for part in parts if not part.endswith(": ")
+    )
 
 
 def _has_meaningful_patient_data(value):
@@ -108,6 +173,8 @@ def _claims_no_patient_data(reasoning):
             "no lifestyle or psychological data was provided",
             "no lifestyle data was provided",
             "no psychological data was provided",
+            "without any patient data regarding symptoms, lifestyle, or psychological factors",
+            "without any patient data regarding",
             "without any information, it is impossible to assess lifestyle contributions",
             "without any information, it is impossible to assess",
         )
