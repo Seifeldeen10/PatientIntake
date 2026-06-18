@@ -7,6 +7,7 @@ from urllib.request import urlopen
 
 from core.agent_utils import compact_text, load_secret as read_secret
 from tools.crewai_agent_tools import run_crewai_json_agent
+from nodes.tasks import get_agent_definition, get_task_definition
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -150,15 +151,17 @@ def parse_pubmed_xml(xml_payload, pmids):
 
 def call_gemini_research_agent(research_packet, *, api_key, model_name=GEMINI_RESEARCH_MODEL, timeout=60):
     """Run the CrewAI research synthesis agent and parse its JSON memo."""
+    agent_def = get_agent_definition("research")
+    task_def = get_task_definition("research")
     return run_crewai_json_agent(
-        role="Research Synthesis Agent",
-        goal="Synthesize supplied clinical, guideline, medication-label, and PubMed evidence without inventing sources.",
-        backstory=RESEARCH_SYSTEM_PROMPT,
+        role=agent_def["role"],
+        goal=agent_def["goal"],
+        backstory=agent_def["backstory"],
         task_prompt=(
-            "Review this clinical/research packet and produce the required JSON research memo.\n\n"
+            f"{task_def['description']}\n\n"
             f"{json.dumps(research_packet, ensure_ascii=False, indent=2)}"
         ),
-        expected_output="A valid JSON object matching the requested research memo response format.",
+        expected_output=task_def["expected_output"],
         api_key=api_key,
         model_name=model_name,
         max_tokens=8192,
@@ -167,7 +170,8 @@ def call_gemini_research_agent(research_packet, *, api_key, model_name=GEMINI_RE
     )
 
 
-def run_research_agent(clinical_packet, *, api_key, model_name=GEMINI_RESEARCH_MODEL, max_pubmed_results=5):
+def build_research_context(clinical_packet, *, max_pubmed_results=5):
+    """Fetch PubMed evidence and build the packet consumed by the crew."""
     query = build_pubmed_query(clinical_packet)
     pubmed_error = None
     try:
@@ -182,6 +186,21 @@ def run_research_agent(clinical_packet, *, api_key, model_name=GEMINI_RESEARCH_M
         "pubmed_papers": papers,
         "clinical_packet": clinical_packet,
     }
+    return {
+        "pubmed_query": query,
+        "pubmed_api_key_configured": bool(load_pubmed_api_key()),
+        "research_packet": research_packet,
+        "pubmed_papers": papers,
+        "pubmed_error": pubmed_error,
+    }
+
+
+def run_research_agent(clinical_packet, *, api_key, model_name=GEMINI_RESEARCH_MODEL, max_pubmed_results=5):
+    context = build_research_context(clinical_packet, max_pubmed_results=max_pubmed_results)
+    query = context["pubmed_query"]
+    papers = context["pubmed_papers"]
+    pubmed_error = context["pubmed_error"]
+    research_packet = context["research_packet"]
 
     try:
         report = call_gemini_research_agent(
@@ -207,7 +226,7 @@ def run_research_agent(clinical_packet, *, api_key, model_name=GEMINI_RESEARCH_M
         "engine": "crewai",
         "model": model_name,
         "pubmed_query": query,
-        "pubmed_api_key_configured": bool(load_pubmed_api_key()),
+        "pubmed_api_key_configured": context["pubmed_api_key_configured"],
         "research_packet": research_packet,
         "pubmed_papers": papers,
         "pubmed_error": pubmed_error,

@@ -8,6 +8,7 @@ application code.
 from nodes._clinical_agent import (
     build_agent_inputs,
     build_clinical_agent_response,
+    build_clinical_evidence_context,
     build_evidence_packet,
     call_gemini_clinical_agent,
 )
@@ -18,16 +19,20 @@ from nodes._evidence_reviewer_agent import (
 )
 from nodes._lifestyle_agent import run_lifestyle_agent
 from nodes._report_agent import (
+    ARABIC_PDF_SYSTEM_PROMPT,
+    GEMINI_REPORT_MODEL,
+    REPORT_SYSTEM_PROMPT,
     build_arabic_pdf_report,
     build_fallback_arabic_pdf_report,
     build_fallback_report,
     build_report_packet,
-    call_arabic_pdf_report,
     call_report_agent,
-    run_report_agent,
     save_report_pdf,
+    run_report_agent,
+    call_arabic_pdf_report,
 )
 from nodes._research_agent import (
+    build_research_context,
     build_pubmed_query,
     call_gemini_research_agent,
     fetch_pubmed_papers,

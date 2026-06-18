@@ -30,7 +30,7 @@ It also includes a local RAG index for clinical books and guidelines using Gemin
 |-- index.html
 |-- script.js
 |-- style.css
-|-- requirements.txt
+|-- pyproject.toml
 |-- README.md
 |-- rag_store.py         # PDF extraction, embedding, vector storage, and retrieval
 |-- .gitignore
@@ -47,7 +47,7 @@ It also includes a local RAG index for clinical books and guidelines using Gemin
 - pip
 - Tesseract OCR installed on the operating system for medication image OCR
 
-Python packages are listed in `requirements.txt`.
+Python packages are listed in `pyproject.toml`.
 
 ## Setup
 
@@ -61,7 +61,7 @@ python -m venv .venv
 Install dependencies:
 
 ```powershell
-pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 Run the app:

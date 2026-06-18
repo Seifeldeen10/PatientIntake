@@ -2,6 +2,7 @@ import json
 
 from core.agent_utils import compact_text
 from tools.crewai_agent_tools import run_crewai_json_agent
+from nodes.tasks import get_agent_definition, get_task_definition
 
 
 GEMINI_EVIDENCE_REVIEWER_MODEL = "gemini-2.5-flash"
@@ -174,15 +175,17 @@ def build_evidence_review_packet(research_result):
 
 def call_gemini_evidence_reviewer(review_packet, *, api_key, model_name=GEMINI_EVIDENCE_REVIEWER_MODEL, timeout=60):
     """Run the CrewAI evidence quality reviewer and parse the JSON review."""
+    agent_def = get_agent_definition("evidence_reviewer")
+    task_def = get_task_definition("evidence_reviewer")
     return run_crewai_json_agent(
-        role="Evidence Quality Reviewer Agent",
-        goal="Grade supplied claims against supplied evidence and flag support, citation, and overstatement risks.",
-        backstory=EVIDENCE_REVIEWER_SYSTEM_PROMPT,
+        role=agent_def["role"],
+        goal=agent_def["goal"],
+        backstory=agent_def["backstory"],
         task_prompt=(
-            "Review this research result and judge the quality of its supplied evidence.\n\n"
+            f"{task_def['description']}\n\n"
             f"{json.dumps(review_packet, ensure_ascii=False, indent=2)}"
         ),
-        expected_output="A valid JSON object matching the requested evidence quality review response format.",
+        expected_output=task_def["expected_output"],
         api_key=api_key,
         model_name=model_name,
         max_tokens=8192,
